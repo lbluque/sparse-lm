@@ -79,7 +79,7 @@ class CVXEstimator(RegressorMixin, LinearModel, metaclass=ABCMeta):
         y: ArrayLike,
         sample_weight: ArrayLike = None,
         *args,
-        **kwargs
+        **kwargs,
     ):
         """Prepare fit input with sklearn help then call fit method.
 
@@ -204,12 +204,42 @@ class CVXEstimator(RegressorMixin, LinearModel, metaclass=ABCMeta):
         return self._beta.value
 
 
-class TikhonovMixin:
-    """Mixin class to add a Tihhonov/ridge regularization term.
+class Hyperparameter:
+    """Descriptor for a single regularization hyperparameter using a cvxpy Parameter."""
 
-    When using this Mixin, a cvxpy parameter should be set as the _lambda2 attribute
-    and an attribute tikhonov_w can be added to allow a matrix otherwise simple l2/Ridge
-    is used.
+    def __set_name__(self, owner, name):
+        """Set the private variable names."""
+        self.public_name = name
+        self.private_name = "_" + name
+
+    def __get__(self, obj, objtype=None):
+        """Return the parameter value."""
+        parameter = getattr(obj, self.private_name, None)
+        return parameter.value
+
+    def __set__(self, obj, value):
+        """Set the parameter value."""
+        if not hasattr(obj, self.private_name):
+            setattr(obj, self.private_name, cp.Parameter(value=value, nonneg=True))
+        else:
+            getattr(obj, self.private_name).value = value
+
+
+class HyperparameterRatio(Hyperparameter):
+    """Descriptor for a ratio of a regularization hyperparameter."""
+
+    def __set__(self, obj, value):
+        """Set the parameter value."""
+        if not 0 <= value <= 1:
+            raise ValueError(f"{self.public_name} must be between 0 and 1.")
+        super().__set__(obj, value)
+
+
+class TikhonovMixin:
+    """Mixin class to add a Tihkonov/Ridge regularization term.
+
+    When using this Mixin, a cvxpy parameter _alpha should be set and an attribute
+    tikhonov_w can be added to allow a matrix otherwise simple l2/Ridge is used.
     """
 
     def _gen_objective(self, X, y):
@@ -221,7 +251,7 @@ class TikhonovMixin:
         else:
             tikhonov_w = np.eye(X.shape[1])
 
-        objective = super()._gen_objective(X, y) + c0 * self._lambda2 * cp.sum_squares(
+        objective = super()._gen_objective(X, y) + c0 * self._alpha * cp.sum_squares(
             tikhonov_w @ self._beta
         )
 

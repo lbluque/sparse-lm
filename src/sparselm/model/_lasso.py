@@ -18,7 +18,7 @@ import cvxpy as cp
 import numpy as np
 from scipy.linalg import sqrtm
 
-from ._base import CVXEstimator
+from ._base import CVXEstimator, Hyperparameter, HyperparameterRatio
 
 
 class Lasso(CVXEstimator):
@@ -32,6 +32,8 @@ class Lasso(CVXEstimator):
         || X \beta - y ||^2_2 + \alpha * ||\beta||_1
 
     """
+
+    alpha = Hyperparameter()
 
     def __init__(
         self,
@@ -64,7 +66,7 @@ class Lasso(CVXEstimator):
                 dictionary of keyword arguments passed to cvxpy solve.
                 See docs in CVXEstimator for more information.
         """
-        self._alpha = cp.Parameter(value=alpha, nonneg=True)
+        self.alpha = alpha
         super().__init__(
             fit_intercept=fit_intercept,
             copy_X=copy_X,
@@ -73,18 +75,8 @@ class Lasso(CVXEstimator):
             solver_options=solver_options,
         )
 
-    @property
-    def alpha(self):
-        """Get alpha hyperparameter value."""
-        return self._alpha.value
-
-    @alpha.setter
-    def alpha(self, val):
-        """Set alpha hyperparameter value."""
-        self._alpha.value = val
-
     def _gen_regularization(self, X):
-        return self._alpha * cp.norm1(self._beta)
+        return getattr(self, "_alpha") * cp.norm1(self._beta)
 
     def _gen_objective(self, X, y):
         # can also use cp.norm2(X @ self._beta - y)**2 not sure whats better
@@ -319,6 +311,7 @@ class SparseGroupLasso(GroupLasso):
 
     Where G represents groups of features / coefficients
     """
+    l1_ratio = HyperparameterRatio()
 
     def __init__(
         self,
@@ -385,9 +378,7 @@ class SparseGroupLasso(GroupLasso):
             **kwargs,
         )
 
-        if not 0 <= l1_ratio <= 1:
-            raise ValueError("l1_ratio must be between 0 and 1.")
-        elif l1_ratio == 0.0:
+        if l1_ratio == 0.0:
             warnings.warn(
                 "It is more efficient to use GroupLasso directly than "
                 "SparseGroupLasso with l1_ratio=0",
@@ -399,37 +390,15 @@ class SparseGroupLasso(GroupLasso):
                 "SparseGroupLasso with l1_ratio=1",
                 UserWarning,
             )
-
-        self._lambda1 = cp.Parameter(nonneg=True, value=l1_ratio * alpha)
-        self._lambda2 = cp.Parameter(nonneg=True, value=(1 - l1_ratio) * alpha)
-        # save exact value so sklearn clone is happy dappy
-        self._l1_ratio = l1_ratio
-
-    @Lasso.alpha.setter
-    def alpha(self, val):
-        """Set hyperparameter values."""
-        self._alpha.value = val
-        self._lambda1.value = self.l1_ratio * val
-        self._lambda2.value = (1 - self.l1_ratio) * val
-
-    @property
-    def l1_ratio(self):
-        """Get l1 ratio."""
-        return self._l1_ratio
-
-    @l1_ratio.setter
-    def l1_ratio(self, val):
-        """Set hyper-parameter values."""
-        if not 0 <= val <= 1:
-            raise ValueError("l1_ratio must be between 0 and 1.")
-        self._l1_ratio = val
-        self._lambda1.value = val * self.alpha
-        self._lambda2.value = (1 - val) * self.alpha
+        self.l1_ratio = l1_ratio
 
     def _gen_regularization(self, X):
         grp_norms = super()._gen_group_norms(X)
         l1_reg = cp.norm1(self._beta)
-        reg = self._lambda1 * l1_reg + self._lambda2 * (self.group_weights @ grp_norms)
+        l1_ratio, alpha = getattr(self, "l1_ratio"), getattr(self, "alpha")
+        reg = l1_ratio * alpha * l1_reg + (1 - l1_ratio) * alpha * (
+            self.group_weights @ grp_norms
+        )
         return reg
 
 

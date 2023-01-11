@@ -19,7 +19,6 @@ or group of coefficients level.
 __author__ = "Luis Barroso-Luque, Fengyu Xie"
 
 
-import warnings
 from abc import ABCMeta, abstractmethod
 
 import cvxpy as cp
@@ -39,7 +38,7 @@ class RegularizedL0(MIQP_L0):
     def __init__(
         self,
         groups,
-        alpha=1.0,
+        eta=1.0,
         big_M=1000,
         hierarchy=None,
         ignore_psd_check=True,
@@ -64,8 +63,8 @@ class RegularizedL0(MIQP_L0):
                 so use function_orbit_ids here.
                 Each external term in cluster subspace should be considered as its
                 own group.
-            alpha (float):
-                Regularization hyper-parameter.
+            eta (float):
+                L0 pseudo-norm regularization hyper-parameter.
             big_M (float):
                 Upper bound on the norm of coefficients associated with each
                 cluster (groups of coefficients) ||Beta_c||_2
@@ -110,123 +109,30 @@ class RegularizedL0(MIQP_L0):
             solver_options=solver_options,
         )
 
-        self._alpha = alpha
-        self._lambda0 = cp.Parameter(nonneg=True, value=alpha)
+        self._eta = cp.Parameter(nonneg=True, value=eta)
 
     @property
-    def alpha(self):
+    def eta(self):
         """Get alpha hyperparameter value."""
-        return self._alpha
+        return self._eta.value
 
-    @alpha.setter
-    def alpha(self, val):
+    @eta.setter
+    def eta(self, val):
         """Set alpha hyperparameter value."""
-        self._alpha = val
-        self._lambda0.value = val
+        self._eta.value = val
 
     def _gen_objective(self, X, y):
         """Generate the quadratic form and l0 regularization portion of objective."""
         c0 = 2 * X.shape[0]  # keeps hyperparameter scale independent
-        objective = super()._gen_objective(X, y) + c0 * self._lambda0 * cp.sum(self._z0)
+        objective = super()._gen_objective(X, y) + c0 * self._eta * cp.sum(self._z0)
         return objective
 
 
 class MixedL0(RegularizedL0, metaclass=ABCMeta):
     """Abstract base class for mixed L0 regularization models: L1L0 and L2L0."""
 
-    def __init__(
-        self,
-        groups,
-        alpha=1.0,
-        l0_ratio=0.5,
-        big_M=1000,
-        hierarchy=None,
-        ignore_psd_check=True,
-        fit_intercept=False,
-        copy_X=True,
-        warm_start=False,
-        solver=None,
-        solver_options=None,
-    ):
-        """Initialize estimator.
-
-        Args:
-            groups (list or ndarray):
-                array-like of integers specifying groups. Length should be the
-                same as model, where each integer entry specifies the group
-                each parameter corresponds to. One dimensional.
-                Note: in cluster expansion, a group can either be each correlation
-                function (function-level hierarchy) or be each cluster orbit
-                (orbit-level hierarchy). In the first case, each index should be its
-                own group, so use range(len(ecis)). In the second case, correlation
-                functions under the same orbit will be considered as the same group,
-                so use function_orbit_ids here.
-                Each external term in cluster subspace should be considered as its
-                own group.
-            alpha (float):
-                Regularization hyper-parameter.
-            l0_ratio (float):
-                Mixing parameter between l1 and l0 regularization.
-            big_M (float):
-                Upper bound on the norm of coefficients associated with each
-                cluster (groups of coefficients) ||Beta_c||_2
-            hierarchy (list):
-                A list of lists of integers storing hierarchy relations between
-                coefficients.
-                Each sublist contains indices of other coefficients
-                on which the coefficient associated with each element of
-                the list depends. i.e. hierarchy = [[1, 2], [0], []] mean that
-                coefficient 0 depends on 1, and 2; 1 depends on 0, and 2 has no
-                dependence.
-            ignore_psd_check (bool):
-                Whether to ignore cvxpy's PSD checks  of matrix used in quadratic
-                form. Default is True to avoid raising errors for poorly
-                conditioned matrices. But if you want to be strict set to False.
-            fit_intercept (bool):
-                Whether the intercept should be estimated or not.
-                If False, the data is assumed to be already centered.
-            copy_X (bool):
-                If True, X will be copied; else, it may be overwritten.
-            warm_start (bool):
-                When set to True, reuse the solution of the previous call to
-                fit as initialization, otherwise, just erase the previous
-                solution.
-            solver (str):
-                cvxpy backend solver to use. Supported solvers are:
-                ECOS, ECOS_BB, CVXOPT, SCS, GUROBI, Elemental.
-                GLPK and GLPK_MI (via CVXOPT GLPK interface)
-            solver_options (dict):
-                dictionary of keyword arguments passed to cvxpy solve.
-                See docs in CVXEstimator for more information.
-        """
-        super().__init__(
-            groups=groups,
-            alpha=alpha,
-            big_M=big_M,
-            hierarchy=hierarchy,
-            ignore_psd_check=ignore_psd_check,
-            fit_intercept=fit_intercept,
-            copy_X=copy_X,
-            warm_start=warm_start,
-            solver=solver,
-            solver_options=solver_options,
-        )
-
-        if not 0 <= l0_ratio <= 1:
-            raise ValueError("l0_ratio must be between 0 and 1.")
-        elif l0_ratio == 0.0:
-            warnings.warn(
-                "It's more efficient to use Ridge/Lasso instead of l0_ratio=0",
-                UserWarning,
-            )
-
-        self._lambda0.value = l0_ratio * alpha
-        self._lambda2 = cp.Parameter(nonneg=True, value=(1 - l0_ratio) * alpha)
-        #  save exact value so sklearn clone is happy dappy
-        self._l0_ratio = l0_ratio
-
-    @RegularizedL0.alpha.setter
-    def alpha(self, val):
+    @RegularizedL0.eta.setter
+    def eta(self, val):
         """Set hyperparameter values."""
         self._alpha = val
         self._lambda0.value = self.l0_ratio * val
@@ -243,8 +149,8 @@ class MixedL0(RegularizedL0, metaclass=ABCMeta):
         if not 0 <= val <= 1:
             raise ValueError("l0_ratio must be between 0 and 1.")
         self._l0_ratio = val
-        self._lambda0.value = val * self.alpha
-        self._lambda2.value = (1 - val) * self.alpha
+        self._lambda0.value = val * self.eta
+        self._lambda2.value = (1 - val) * self.eta
 
     @abstractmethod
     def _gen_objective(self, X, y):
@@ -339,7 +245,7 @@ class L1L0(MixedL0):
         """
         super().__init__(
             groups=groups,
-            alpha=alpha,
+            eta=alpha,
             l0_ratio=l0_ratio,
             big_M=big_M,
             hierarchy=hierarchy,
@@ -461,7 +367,7 @@ class L2L0(TikhonovMixin, MixedL0):
         """
         super().__init__(
             groups=groups,
-            alpha=alpha,
+            eta=alpha,
             l0_ratio=l0_ratio,
             big_M=big_M,
             hierarchy=hierarchy,
